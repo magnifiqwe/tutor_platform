@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><script>
+let worker, input, interrupt, busy=false;
+const parentOrigin=__APP_ORIGIN__;
+function send(event){parent.postMessage({source:'python-runner',event},parentOrigin)}
+addEventListener('message',e=>{if(e.source!==parent||e.origin!==parentOrigin)return;const m=e.data;
+if(m.type==='run'){
+ if(busy)return;busy=true;worker?.terminate();
+ if(!crossOriginIsolated){send({type:'stderr',text:'Для Python необходимы HTTPS и заголовки из инструкции развертывания.'});busy=false;return;}
+ input=new Int32Array(new SharedArrayBuffer(65544));interrupt=new Uint8Array(new SharedArrayBuffer(1));worker=new Worker('/python-worker.js');
+ worker.onmessage=e=>{send(e.data);if(e.data.type==='done')busy=false;};worker.onerror=e=>{send({type:'stderr',text:e.message});send({type:'done'});busy=false;};
+ worker.postMessage({...m,input:input.buffer,interrupt:interrupt.buffer});
+}else if(m.type==='input'&&input){const bytes=new TextEncoder().encode(m.text);if(bytes.length>65000){send({type:'stderr',text:'Слишком длинная строка ввода'});return;}new Uint8Array(input.buffer,8).set(bytes);Atomics.store(input,1,bytes.length);Atomics.store(input,0,1);Atomics.notify(input,0);}
+else if(m.type==='stop'){worker?.terminate();busy=false;send({type:'status',text:'Выполнение остановлено. Изменения файлов незавершённого запуска не сохранены.'});send({type:'done'});}
+});send({type:'ready'});
+</script>

@@ -1,0 +1,13 @@
+import {test,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+process.env.DATA_DIR=mkdtempSync(tmpdir()+'/tutor-test-');
+const {put,get,remaining,finishLesson,hash,verify,db}=await import('../server/store.js');
+after(()=>{db.close();rmSync(process.env.DATA_DIR!,{recursive:true,force:true});});
+test('пароль хешируется с солью, неверный пароль отклоняется',()=>{const a=hash('example-password');assert.equal(verify('example-password',a),true);assert.equal(verify('wrong',a),false);assert.notEqual(a,hash('example-password'));});
+test('одно списание за урок, повторное завершение отклоняется',()=>{put('pack',{id:'p1',studentId:'s1',count:4,duration:60,amount:6200});put('lesson',{id:'l1',studentId:'s1',duration:60,packId:'p1',status:'scheduled',active:true});finishLesson('l1','completed',true);assert.equal(remaining('s1'),3);assert.throws(()=>finishLesson('l1','completed',true));assert.equal(remaining('s1'),3);assert.equal(get('lesson','l1').active,false);});
+test('бесплатный пробник ничего не списывает',()=>{put('lesson',{id:'trial',studentId:'s1',duration:60,trial:true,status:'scheduled'});finishLesson('trial','completed',true);assert.equal(remaining('s1'),3);assert.equal(get('lesson','trial').charged,false);});
+test('нельзя списать пакет другого ученика или другой длительности',()=>{for(const [id,studentId,duration] of [['foreign','s2',60],['duration','s1',90]] as const){put('lesson',{id,studentId,duration,packId:'p1',status:'scheduled'});assert.throws(()=>finishLesson(id,'completed',true));assert.equal(get('lesson',id).status,'scheduled');}assert.equal(remaining('s1'),3);});
+test('поздняя отмена списывается отдельно от проведенного урока',()=>{put('lesson',{id:'late',studentId:'s1',duration:60,packId:'p1',status:'scheduled'});finishLesson('late','late_cancelled',true);assert.equal(get('lesson','late').status,'late_cancelled');assert.equal(remaining('s1'),2);});
+test('новый тариф не меняет условия старого пакета',()=>{put('pack',{id:'p2',studentId:'s1',count:4,duration:90,amount:9000});assert.equal(get('pack','p1').amount,6200);assert.equal(remaining('s1'),6);});
